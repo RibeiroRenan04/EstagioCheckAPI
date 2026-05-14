@@ -20,17 +20,57 @@ public class UsersController(AppDbContext db) : ControllerBase
             .OrderBy(u => u.FullName)
             .ToListAsync();
 
-        return Ok(users.Select(u => new UserDto
-        {
-            Id = u.Id,
-            FullName = u.FullName,
-            Email = u.Email,
-            Matricula = u.Matricula,
-            Role = u.Role,
-            GroupId = u.GroupMembership?.GroupId,
-            GroupCode = u.GroupMembership?.Group?.Code,
-            GroupName = u.GroupMembership?.Group?.Name
-        }));
+        return Ok(users.Select(MapToDto));
+    }
+
+    // ── Painel de alunos com filtros ──────────────────────────────────────────
+    [HttpGet("students")]
+    public async Task<ActionResult<List<UserDto>>> GetStudents(
+        [FromQuery] int? semester,
+        [FromQuery] string? shift,
+        [FromQuery] bool? isActive)
+    {
+        var query = db.Users
+            .Include(u => u.GroupMembership).ThenInclude(m => m!.Group)
+            .Where(u => u.Role == "aluno");
+
+        if (semester.HasValue)
+            query = query.Where(u => u.Semester == semester.Value);
+
+        if (!string.IsNullOrEmpty(shift))
+            query = query.Where(u => u.Shift == shift.ToLower());
+
+        if (isActive.HasValue)
+            query = query.Where(u => u.IsActive == isActive.Value);
+
+        var users = await query.OrderBy(u => u.FullName).ToListAsync();
+        return Ok(users.Select(MapToDto));
+    }
+
+    // ── Painel de preceptores ─────────────────────────────────────────────────
+    [HttpGet("preceptors")]
+    public async Task<ActionResult<List<UserDto>>> GetPreceptors()
+    {
+        var users = await db.Users
+            .Where(u => u.Role == "preceptor" || u.Role == "supervisor")
+            .OrderBy(u => u.Role).ThenBy(u => u.FullName)
+            .ToListAsync();
+
+        return Ok(users.Select(MapToDto));
+    }
+
+    // ── Toggle ativo/inativo ──────────────────────────────────────────────────
+    [HttpPatch("{id}/active")]
+    public async Task<IActionResult> ToggleActive(Guid id)
+    {
+        var user = await db.Users.FindAsync(id);
+        if (user == null) return NotFound();
+
+        user.IsActive = !user.IsActive;
+        user.UpdatedAt = DateTime.UtcNow;
+
+        await db.SaveChangesAsync();
+        return Ok(new { id = user.Id, isActive = user.IsActive });
     }
 
     [HttpPatch("{id}/assign-group")]
@@ -44,11 +84,9 @@ public class UsersController(AppDbContext db) : ControllerBase
         if (user.Role != "aluno")
             return BadRequest(new { message = "Apenas alunos podem ser atribuídos a grupos." });
 
-        // Remove vínculo existente
         if (user.GroupMembership != null)
             db.GroupMemberships.Remove(user.GroupMembership);
 
-        // Novo vínculo
         if (dto.GroupId.HasValue)
         {
             var group = await db.StudentGroups.FindAsync(dto.GroupId.Value);
@@ -64,4 +102,154 @@ public class UsersController(AppDbContext db) : ControllerBase
         await db.SaveChangesAsync();
         return NoContent();
     }
+
+    // ── Criar preceptor / supervisor ──────────────────────────────────────────
+    [HttpPost("staff")]
+    public async Task<ActionResult<UserDto>> CreateStaff([FromBody] CreateStaffDto dto)
+    {
+        if (dto.Role != "preceptor" && dto.Role != "supervisor")
+            return BadRequest(new { message = "Papel deve ser 'preceptor' ou 'supervisor'." });
+
+        var exists = await db.Users.AnyAsync(u => u.Email == dto.Email.ToLower());
+        if (exists)
+            return Conflict(new { message = "E-mail já cadastrado." });
+
+        var user = new ApplicationUser
+        {
+            FullName = dto.FullName.Trim(),
+            Email = dto.Email.Trim().ToLower(),
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
+            Role = dto.Role,
+            Institution = dto.Institution?.Trim(),
+            Phone = dto.Phone?.Trim(),
+            MustChangePassword = true
+        };
+
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        return CreatedAtAction(nameof(GetAll), MapToDto(user));
+    }
+
+    // ── Importação em lote de alunos ──────────────────────────────────────────
+    [HttpPost("bulk-import")]
+    public async Task<ActionResult<BulkImportResponseDto>> BulkImport([FromBody] BulkImportRequestDto dto)
+    {
+        int imported = 0, updated = 0;
+        var errors = new List<string>();
+
+        foreach (var s in dto.Students)
+        {
+            try
+            {
+                var existing = await db.Users.FirstOrDefaultAsync(u => u.Rgm == s.Rgm);
+                if (existing != null)
+                {
+                    existing.Semester = s.Semester;
+                    existing.Shift = s.Shift.ToLower();
+                    existing.UpdatedAt = DateTime.UtcNow;
+                    updated++;
+                }
+                else
+                {
+                    db.Users.Add(new ApplicationUser
+                    {
+                        FullName = s.FullName.Trim(),
+                        Email = null,
+                        PasswordHash = BCrypt.Net.BCrypt.HashPassword(s.Rgm),
+                        Role = "aluno",
+                        Rgm = s.Rgm.Trim(),
+                        Semester = s.Semester,
+                        Shift = s.Shift.ToLower(),
+                        MustChangePassword = true,
+                        MustSetEmail = true
+                    });
+                    imported++;
+                }
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"RGM {s.Rgm}: {ex.Message}");
+            }
+        }
+
+        await db.SaveChangesAsync();
+        return Ok(new BulkImportResponseDto(imported, updated, errors));
+    }
+
+    // ── Avançar semestre ──────────────────────────────────────────────────────
+    [HttpPost("advance-semester")]
+    public async Task<ActionResult<AdvanceSemesterResponseDto>> AdvanceSemester()
+    {
+        // 1. Alunos do 8° semestre → formados
+        var semester8 = await db.Users
+            .Where(u => u.Role == "aluno" && u.Semester == 8 && u.IsActive)
+            .ToListAsync();
+
+        var totalHoursMap = await BuildTotalHoursMap(semester8.Select(u => u.Id).ToList());
+
+        foreach (var student in semester8)
+        {
+            db.StudentSemesterHistories.Add(new StudentSemesterHistory
+            {
+                StudentId = student.Id,
+                Semester = 8,
+                TotalHours = totalHoursMap.GetValueOrDefault(student.Id, 0)
+            });
+            student.IsActive = false;
+            student.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // 2. Alunos do 7° semestre → avançam para o 8°
+        var semester7 = await db.Users
+            .Where(u => u.Role == "aluno" && u.Semester == 7 && u.IsActive)
+            .ToListAsync();
+
+        var totalHoursMap7 = await BuildTotalHoursMap(semester7.Select(u => u.Id).ToList());
+
+        foreach (var student in semester7)
+        {
+            db.StudentSemesterHistories.Add(new StudentSemesterHistory
+            {
+                StudentId = student.Id,
+                Semester = 7,
+                TotalHours = totalHoursMap7.GetValueOrDefault(student.Id, 0)
+            });
+            student.Semester = 8;
+            student.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await db.SaveChangesAsync();
+
+        return Ok(new AdvanceSemesterResponseDto(semester7.Count, semester8.Count));
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    private async Task<Dictionary<Guid, decimal>> BuildTotalHoursMap(List<Guid> studentIds)
+    {
+        if (studentIds.Count == 0) return [];
+
+        // Conta check-ins aprovados; cada check-in representa um turno de 4h
+        return await db.AttendanceRecords
+            .Where(a => studentIds.Contains(a.StudentId) && a.Status == "aprovado" && a.Type == "check_in")
+            .GroupBy(a => a.StudentId)
+            .Select(g => new { StudentId = g.Key, TotalHours = (decimal)g.Count() * 4 })
+            .ToDictionaryAsync(x => x.StudentId, x => x.TotalHours);
+    }
+
+    private static UserDto MapToDto(ApplicationUser u) => new()
+    {
+        Id = u.Id,
+        FullName = u.FullName,
+        Email = u.Email,
+        Matricula = u.Matricula,
+        Rgm = u.Rgm,
+        Semester = u.Semester,
+        Shift = u.Shift,
+        Role = u.Role,
+        IsActive = u.IsActive,
+        GroupId = u.GroupMembership?.GroupId,
+        GroupCode = u.GroupMembership?.Group?.Code,
+        GroupName = u.GroupMembership?.Group?.Name
+    };
 }

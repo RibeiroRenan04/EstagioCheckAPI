@@ -19,9 +19,11 @@ public class TokenService(IConfiguration config)
         var claims = new[]
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new Claim(JwtRegisteredClaimNames.Email, user.Email),
+            new Claim(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
             new Claim("fullName", user.FullName),
             new Claim(ClaimTypes.Role, user.Role),
+            new Claim("mustChangePassword", user.MustChangePassword.ToString().ToLower()),
+            new Claim("mustSetEmail", user.MustSetEmail.ToString().ToLower()),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 

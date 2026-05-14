@@ -16,6 +16,9 @@ public class Location
     /// <summary>Horário de fim do turno, ex: "13:00"</summary>
     public string ShiftEnd { get; set; } = "13:00";
 
+    /// <summary>Código CNES quando importado via Busca Saúde DF.</summary>
+    public string? CodigoCnes { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     // Navigation

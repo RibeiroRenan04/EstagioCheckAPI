@@ -13,7 +13,16 @@ public class LocationDto
     public bool IsInstitution { get; init; }
     public string ShiftStart { get; init; } = string.Empty;
     public string ShiftEnd { get; init; } = string.Empty;
+    public string? CodigoCnes { get; init; }
 }
+
+public record ImportBuscaSaudeDto(
+    [Required] string CodigoCnes,
+    [Required, MaxLength(300)] string Nome,
+    [MaxLength(500)] string? Endereco,
+    [Required] double Latitude,
+    [Required] double Longitude
+);
 
 public record CreateLocationDto(
     [Required, MaxLength(300)] string Name,

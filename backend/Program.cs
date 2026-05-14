@@ -40,6 +40,13 @@ builder.Services.AddAuthorization();
 // ── Services ─────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<GeoService>();
+builder.Services.AddScoped<EmailService>();
+builder.Services.AddScoped<BuscaSaudeService>();
+builder.Services.AddHttpClient("BuscaSaude", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.DefaultRequestHeaders.Add("Accept", "application/json");
+});
 builder.Services.AddHttpContextAccessor();
 
 // ── CORS ──────────────────────────────────────────────────────────────────────

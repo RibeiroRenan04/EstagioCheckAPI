@@ -1,6 +1,7 @@
 using EstagioCheck.API.Data;
 using EstagioCheck.API.DTOs;
 using EstagioCheck.API.Models;
+using EstagioCheck.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -10,7 +11,7 @@ namespace EstagioCheck.API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class LocationsController(AppDbContext db) : ControllerBase
+public class LocationsController(AppDbContext db, BuscaSaudeService buscaSaude) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<List<LocationDto>>> GetAll()
@@ -102,11 +103,54 @@ public class LocationsController(AppDbContext db) : ControllerBase
         return NoContent();
     }
 
+    // ── Busca Saúde DF (CNES / OpenDataSUS) ──────────────────────────────────
+    /// <summary>Pesquisa estabelecimentos de saúde no DF via API CNES.</summary>
+    [HttpGet("busca-saude")]
+    [Authorize(Roles = "supervisor")]
+    public async Task<ActionResult<List<BuscaSaudeEstabelecimentoDto>>> BuscarSaude(
+        [FromQuery] string? q,
+        [FromQuery] string? municipio = "BRASILIA",
+        [FromQuery] int limit = 50,
+        [FromQuery] int offset = 0)
+    {
+        var results = await buscaSaude.BuscarAsync(q, municipio, limit, offset);
+        return Ok(results);
+    }
+
+    /// <summary>Importa um estabelecimento do CNES como local de estágio.</summary>
+    [HttpPost("import-from-busca-saude")]
+    [Authorize(Roles = "supervisor")]
+    public async Task<ActionResult<LocationDto>> ImportFromBuscaSaude(
+        [FromBody] ImportBuscaSaudeDto dto)
+    {
+        var alreadyExists = await db.Locations.AnyAsync(l => l.CodigoCnes == dto.CodigoCnes);
+        if (alreadyExists)
+            return Conflict(new { message = "Estabelecimento já importado." });
+
+        var loc = new Location
+        {
+            Name = dto.Nome.Trim(),
+            Address = dto.Endereco?.Trim(),
+            Latitude = dto.Latitude,
+            Longitude = dto.Longitude,
+            RadiusMeters = 150,
+            IsInstitution = true,
+            ShiftStart = "07:00",
+            ShiftEnd = "19:00",
+            CodigoCnes = dto.CodigoCnes
+        };
+
+        db.Locations.Add(loc);
+        await db.SaveChangesAsync();
+        return CreatedAtAction(nameof(Get), new { id = loc.Id }, Map(loc));
+    }
+
     private static LocationDto Map(Location l) => new()
     {
         Id = l.Id, Name = l.Name, Address = l.Address,
         Latitude = l.Latitude, Longitude = l.Longitude,
         RadiusMeters = l.RadiusMeters, IsInstitution = l.IsInstitution,
-        ShiftStart = l.ShiftStart, ShiftEnd = l.ShiftEnd
+        ShiftStart = l.ShiftStart, ShiftEnd = l.ShiftEnd,
+        CodigoCnes = l.CodigoCnes
     };
 }

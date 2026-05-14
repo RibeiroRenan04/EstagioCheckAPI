@@ -5,14 +5,30 @@ public class ApplicationUser
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string FullName { get; set; } = string.Empty;
-    public string Email { get; set; } = string.Empty;
+    public string? Email { get; set; }
     public string PasswordHash { get; set; } = string.Empty;
 
     /// <summary>"aluno" | "preceptor" | "supervisor"</summary>
     public string Role { get; set; } = "aluno";
 
     public string? Matricula { get; set; }
+
+    /// <summary>Registro Geral de Matriculado – identificador institucional do aluno.</summary>
+    public string? Rgm { get; set; }
+
+    /// <summary>Semestre atual do aluno (7 ou 8).</summary>
+    public int? Semester { get; set; }
+
+    /// <summary>Turno: "manha" | "tarde" | "noite"</summary>
+    public string? Shift { get; set; }
+
     public string? Phone { get; set; }
+    public string? Institution { get; set; }
+
+    public bool MustChangePassword { get; set; } = false;
+    public bool MustSetEmail { get; set; } = false;
+    public bool IsActive { get; set; } = true;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
