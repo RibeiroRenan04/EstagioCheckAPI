@@ -11,6 +11,10 @@ AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ── Porta dinâmica (Railway injeta a variável PORT) ───────────────────────────
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+
 // ── Database ─────────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -85,26 +89,26 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// ── Auto-migrate on startup (dev) ─────────────────────────────────────────────
-if (app.Environment.IsDevelopment())
+// ── Auto-migrate on startup ───────────────────────────────────────────────────
+using (var scope = app.Services.CreateScope())
 {
-    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
-    app.UseSwagger();
-    app.UseSwaggerUI();
 }
 
-// CORS deve vir antes de UseHttpsRedirection para que o header
-// Access-Control-Allow-Origin esteja presente em redirects e em respostas de erro.
+// ── Swagger (disponível em todos os ambientes) ────────────────────────────────
+app.UseSwagger();
+app.UseSwaggerUI();
+
+// CORS deve vir antes de autenticação e controllers.
 app.UseCors("Angular");
 
-// Em dev a API sobe em http://localhost:5000; o redirect HTTPS quebraria o CORS.
-if (!app.Environment.IsDevelopment())
-{
-    app.UseHttpsRedirection();
-}
 app.UseAuthentication();
 app.UseAuthorization();
+
+// ── Health checks ─────────────────────────────────────────────────────────────
+app.MapGet("/", () => "API ONLINE");
+app.MapGet("/health", () => Results.Ok("Healthy"));
+
 app.MapControllers();
 app.Run();
