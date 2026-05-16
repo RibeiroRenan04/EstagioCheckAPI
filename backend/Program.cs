@@ -12,8 +12,12 @@ AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Porta dinâmica (Railway injeta a variável PORT) ───────────────────────────
-var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
-builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+// Só sobrescreve a URL quando rodando no Railway; localmente usa o launchSettings.json.
+var railwayPort = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrEmpty(railwayPort))
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{railwayPort}");
+}
 
 // ── Database ─────────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -90,8 +94,10 @@ builder.Services.AddSwaggerGen(c =>
 var app = builder.Build();
 
 // ── Auto-migrate on startup ───────────────────────────────────────────────────
-using (var scope = app.Services.CreateScope())
+var connStr = app.Configuration.GetConnectionString("DefaultConnection");
+if (!string.IsNullOrWhiteSpace(connStr))
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
 }
