@@ -1,103 +1,86 @@
-# =============================================================================
-# WORKFLOW: Sincronizar Backend → Repositório Consolidado
-# -----------------------------------------------------------------------------
-# Repositório de origem : RibeiroRenan04/EstagioCheckAPI  (este repo)
-# Destino               : <SEU_USUARIO>/<REPO_CONSOLIDADO>  ← altere abaixo
-# Pasta de destino      : /backend
-# =============================================================================
-#
-# PRÉ-REQUISITOS:
-#   1. Crie um PAT (Personal Access Token) com escopo "repo"
-#      → GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
-#      → "Generate new token" → selecione "repo" → copie o token
-#   2. Adicione o secret neste repositório:
-#      → Settings → Secrets and variables → Actions → "New repository secret"
-#      → Nome: PAT_TOKEN   Valor: <seu token>
-#   3. Altere as variáveis em "env:" abaixo
-# =============================================================================
-
-name: 🔄 Sync Backend → Consolidated
+name: "🔄 Sync: Backend → Consolidado"
 
 on:
   push:
     branches:
       - main
-    paths-ignore:
-      - '.github/**'   # evita loop caso o próprio workflow seja commitado
-  workflow_dispatch:   # permite disparo manual pela UI do GitHub
+  workflow_dispatch:
 
-# ─────────────────────────────────────────────
-#  CONFIGURAÇÃO — altere somente este bloco
-# ─────────────────────────────────────────────
-env:
-  CONSOLIDATED_OWNER: "RibeiroRenan04"          # ex: RibeiroRenan04
-  CONSOLIDATED_REPO:  "TG1_UDF_enfermagem" # nome do repo consolidado
-  CONSOLIDATED_BRANCH: "main"
-  DEST_FOLDER: "backend"                     # pasta dentro do repo consolidado
+# Garante que apenas uma sincronização do backend rode por vez.
+concurrency:
+  group: sync-backend-to-consolidated
+  cancel-in-progress: false
 
 jobs:
-  sync-backend:
-    name: Sync backend to consolidated repo
+  sync:
+    name: "Sincronizar Backend → Consolidado"
     runs-on: ubuntu-latest
 
-    # Impede execuções paralelas que gerariam conflito de push
-    concurrency:
-      group: sync-consolidated-backend
-      cancel-in-progress: false
+    # Ignora commits gerados pelo próprio bot para evitar loop infinito.
+    if: "!contains(github.event.head_commit.message, '[sync-bot]')"
 
     steps:
-      # ── 1. Checkout deste repositório ──────────────────────────────────────
-      - name: Checkout source (backend)
+      # ── 1. Checkout do repositório FONTE (este repo — backend) ───────────
+      - name: "📥 Checkout — Repositório Backend"
         uses: actions/checkout@v4
         with:
+          path: source
           fetch-depth: 1
 
-      # ── 2. Clone do repositório consolidado ────────────────────────────────
-      - name: Clone consolidated repository
-        run: |
-          git clone \
-            --depth 1 \
-            --branch "$CONSOLIDATED_BRANCH" \
-            "https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/$CONSOLIDATED_OWNER/$CONSOLIDATED_REPO.git" \
-            _consolidated
+      # ── 2. Checkout do repositório CONSOLIDADO ────────────────────────────
+      - name: "📥 Checkout — Repositório Consolidado"
+        uses: actions/checkout@v4
+        with:
+          repository: RibeiroRenan04/TG1_UDF_enfermagem
+          token: ${{ secrets.PAT_TOKEN }}
+          path: consolidated
+          fetch-depth: 1
 
-      # ── 3. Sincronizar arquivos (rsync) ─────────────────────────────────────
-      - name: Sync files to /backend
+      # ── 3. Sincronização via rsync ────────────────────────────────────────
+      - name: "🔄 Sincronizar arquivos via rsync"
         run: |
+          mkdir -p consolidated/backend
+
           rsync -av --delete \
-            --exclude='.git/'                     \
-            --exclude='.github/'                  \
-            --exclude='bin/'                      \
-            --exclude='obj/'                      \
-            --exclude='*.user'                    \
-            --exclude='*.suo'                     \
-            --exclude='*.log'                     \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='bin/' \
+            --exclude='obj/' \
+            --exclude='*.user' \
+            --exclude='*.suo' \
+            --exclude='*.log' \
+            --exclude='*.tmp' \
+            --exclude='.DS_Store' \
+            --exclude='Thumbs.db' \
             --exclude='appsettings.Development.json' \
-            --exclude='appsettings.Production.json'  \
-            --exclude='appsettings.Staging.json'     \
-            ./ "_consolidated/$DEST_FOLDER/"
+            --exclude='appsettings.Production.json' \
+            --exclude='appsettings.Staging.json' \
+            source/ consolidated/backend/
 
-      # ── 4. Commit e push (somente se houver mudanças) ──────────────────────
-      - name: Commit and push changes
+      # ── 4. Commit e Push no consolidado ───────────────────────────────────
+      - name: "📝 Commit e Push no Consolidado"
+        working-directory: consolidated
+        env:
+          GH_SHA: ${{ github.sha }}
+          GH_MSG: ${{ github.event.head_commit.message }}
+          GH_REPO: ${{ github.repository }}
+          GH_ACTOR: ${{ github.actor }}
         run: |
-          cd _consolidated
-
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add -A
 
           if git diff --cached --quiet; then
-            echo "✅ Nenhuma alteração detectada. Nada a sincronizar."
-          else
-            COMMIT_MSG="sync(backend): update from ${{ github.repository }}@${GITHUB_SHA::8}
-
-            Branch  : ${{ github.ref_name }}
-            Commit  : ${{ github.sha }}
-            Autor   : ${{ github.actor }}
-            Trigger : ${{ github.event_name }}"
-
-            git commit -m "$COMMIT_MSG"
-            git push
-            echo "✅ Sincronização concluída com sucesso."
+            echo "✅ Nenhuma alteração detectada. Sincronização desnecessária."
+            exit 0
           fi
+
+          git commit \
+            -m "chore(sync/backend): ${GH_MSG} [sync-bot]" \
+            -m "Origem: ${GH_REPO}@${GH_SHA}" \
+            -m "Executado por: ${GH_ACTOR}"
+
+          git push
+          echo "✅ Backend sincronizado com sucesso!"
+
