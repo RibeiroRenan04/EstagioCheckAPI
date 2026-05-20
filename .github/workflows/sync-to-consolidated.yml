@@ -30,8 +30,8 @@ on:
 #  CONFIGURAÇÃO — altere somente este bloco
 # ─────────────────────────────────────────────
 env:
-  CONSOLIDATED_OWNER: "SEU_USUARIO"          # ex: RibeiroRenan04
-  CONSOLIDATED_REPO:  "EstagioCheck-Unified" # nome do repo consolidado
+  CONSOLIDATED_OWNER: "RibeiroRenan04"          # ex: RibeiroRenan04
+  CONSOLIDATED_REPO:  "TG1_UDF_Enfermagem" # nome do repo consolidado
   CONSOLIDATED_BRANCH: "main"
   DEST_FOLDER: "backend"                     # pasta dentro do repo consolidado
 
