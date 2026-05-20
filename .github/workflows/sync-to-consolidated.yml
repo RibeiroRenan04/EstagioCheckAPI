@@ -31,7 +31,7 @@ on:
 # ─────────────────────────────────────────────
 env:
   CONSOLIDATED_OWNER: "RibeiroRenan04"          # ex: RibeiroRenan04
-  CONSOLIDATED_REPO:  "TG1_UDF_Enfermagem" # nome do repo consolidado
+  CONSOLIDATED_REPO:  "TG1_UDF_enfermagem" # nome do repo consolidado
   CONSOLIDATED_BRANCH: "main"
   DEST_FOLDER: "backend"                     # pasta dentro do repo consolidado
 
