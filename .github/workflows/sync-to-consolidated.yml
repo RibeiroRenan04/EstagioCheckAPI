@@ -1,0 +1,103 @@
+# =============================================================================
+# WORKFLOW: Sincronizar Backend → Repositório Consolidado
+# -----------------------------------------------------------------------------
+# Repositório de origem : RibeiroRenan04/EstagioCheckAPI  (este repo)
+# Destino               : <SEU_USUARIO>/<REPO_CONSOLIDADO>  ← altere abaixo
+# Pasta de destino      : /backend
+# =============================================================================
+#
+# PRÉ-REQUISITOS:
+#   1. Crie um PAT (Personal Access Token) com escopo "repo"
+#      → GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
+#      → "Generate new token" → selecione "repo" → copie o token
+#   2. Adicione o secret neste repositório:
+#      → Settings → Secrets and variables → Actions → "New repository secret"
+#      → Nome: PAT_TOKEN   Valor: <seu token>
+#   3. Altere as variáveis em "env:" abaixo
+# =============================================================================
+
+name: 🔄 Sync Backend → Consolidated
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '.github/**'   # evita loop caso o próprio workflow seja commitado
+  workflow_dispatch:   # permite disparo manual pela UI do GitHub
+
+# ─────────────────────────────────────────────
+#  CONFIGURAÇÃO — altere somente este bloco
+# ─────────────────────────────────────────────
+env:
+  CONSOLIDATED_OWNER: "SEU_USUARIO"          # ex: RibeiroRenan04
+  CONSOLIDATED_REPO:  "EstagioCheck-Unified" # nome do repo consolidado
+  CONSOLIDATED_BRANCH: "main"
+  DEST_FOLDER: "backend"                     # pasta dentro do repo consolidado
+
+jobs:
+  sync-backend:
+    name: Sync backend to consolidated repo
+    runs-on: ubuntu-latest
+
+    # Impede execuções paralelas que gerariam conflito de push
+    concurrency:
+      group: sync-consolidated-backend
+      cancel-in-progress: false
+
+    steps:
+      # ── 1. Checkout deste repositório ──────────────────────────────────────
+      - name: Checkout source (backend)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ── 2. Clone do repositório consolidado ────────────────────────────────
+      - name: Clone consolidated repository
+        run: |
+          git clone \
+            --depth 1 \
+            --branch "$CONSOLIDATED_BRANCH" \
+            "https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/$CONSOLIDATED_OWNER/$CONSOLIDATED_REPO.git" \
+            _consolidated
+
+      # ── 3. Sincronizar arquivos (rsync) ─────────────────────────────────────
+      - name: Sync files to /backend
+        run: |
+          rsync -av --delete \
+            --exclude='.git/'                     \
+            --exclude='.github/'                  \
+            --exclude='bin/'                      \
+            --exclude='obj/'                      \
+            --exclude='*.user'                    \
+            --exclude='*.suo'                     \
+            --exclude='*.log'                     \
+            --exclude='appsettings.Development.json' \
+            --exclude='appsettings.Production.json'  \
+            --exclude='appsettings.Staging.json'     \
+            ./ "_consolidated/$DEST_FOLDER/"
+
+      # ── 4. Commit e push (somente se houver mudanças) ──────────────────────
+      - name: Commit and push changes
+        run: |
+          cd _consolidated
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "✅ Nenhuma alteração detectada. Nada a sincronizar."
+          else
+            COMMIT_MSG="sync(backend): update from ${{ github.repository }}@${GITHUB_SHA::8}
+
+            Branch  : ${{ github.ref_name }}
+            Commit  : ${{ github.sha }}
+            Autor   : ${{ github.actor }}
+            Trigger : ${{ github.event_name }}"
+
+            git commit -m "$COMMIT_MSG"
+            git push
+            echo "✅ Sincronização concluída com sucesso."
+          fi
