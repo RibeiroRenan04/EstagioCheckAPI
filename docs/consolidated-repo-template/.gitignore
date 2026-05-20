@@ -1,0 +1,27 @@
+# .gitignore para o Repositório Consolidado
+# Não versionar nada que já é ignorado nos repos originais
+
+# ── .NET / Backend ──────────────────────────────
+backend/bin/
+backend/obj/
+backend/*.user
+backend/*.suo
+backend/appsettings.Development.json
+backend/appsettings.Production.json
+backend/appsettings.Staging.json
+
+# ── Node / Frontend ─────────────────────────────
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+frontend/build/
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+frontend/.env.development
+frontend/coverage/
+
+# ── Sistema / Editor ────────────────────────────
+.DS_Store
+Thumbs.db
+*.log

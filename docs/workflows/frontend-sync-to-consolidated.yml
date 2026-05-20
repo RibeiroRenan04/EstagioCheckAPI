@@ -1,0 +1,98 @@
+# =============================================================================
+# WORKFLOW: Sincronizar Frontend → Repositório Consolidado
+# -----------------------------------------------------------------------------
+# INSTRUÇÕES DE USO:
+#   1. Copie este arquivo para o repositório do seu frontend em:
+#      .github/workflows/sync-to-consolidated.yml
+#   2. Adicione o secret PAT_TOKEN no repositório do frontend
+#      (mesmo token usado no backend)
+#   3. Altere as variáveis em "env:" abaixo
+# =============================================================================
+
+name: 🔄 Sync Frontend → Consolidated
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '.github/**'
+  workflow_dispatch:   # permite disparo manual pela UI do GitHub
+
+# ─────────────────────────────────────────────
+#  CONFIGURAÇÃO — altere somente este bloco
+# ─────────────────────────────────────────────
+env:
+  CONSOLIDATED_OWNER: "SEU_USUARIO"          # ex: RibeiroRenan04
+  CONSOLIDATED_REPO:  "EstagioCheck-Unified" # nome do repo consolidado
+  CONSOLIDATED_BRANCH: "main"
+  DEST_FOLDER: "frontend"                    # pasta dentro do repo consolidado
+
+jobs:
+  sync-frontend:
+    name: Sync frontend to consolidated repo
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: sync-consolidated-frontend
+      cancel-in-progress: false
+
+    steps:
+      # ── 1. Checkout deste repositório ──────────────────────────────────────
+      - name: Checkout source (frontend)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ── 2. Clone do repositório consolidado ────────────────────────────────
+      - name: Clone consolidated repository
+        run: |
+          git clone \
+            --depth 1 \
+            --branch "$CONSOLIDATED_BRANCH" \
+            "https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/$CONSOLIDATED_OWNER/$CONSOLIDATED_REPO.git" \
+            _consolidated
+
+      # ── 3. Sincronizar arquivos (rsync) ─────────────────────────────────────
+      - name: Sync files to /frontend
+        run: |
+          rsync -av --delete \
+            --exclude='.git/'           \
+            --exclude='.github/'        \
+            --exclude='node_modules/'   \
+            --exclude='.next/'          \
+            --exclude='dist/'           \
+            --exclude='build/'          \
+            --exclude='.env'            \
+            --exclude='.env.local'      \
+            --exclude='.env.production' \
+            --exclude='.env.development'\
+            --exclude='*.log'           \
+            --exclude='.DS_Store'       \
+            --exclude='coverage/'       \
+            ./ "_consolidated/$DEST_FOLDER/"
+
+      # ── 4. Commit e push (somente se houver mudanças) ──────────────────────
+      - name: Commit and push changes
+        run: |
+          cd _consolidated
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "✅ Nenhuma alteração detectada. Nada a sincronizar."
+          else
+            COMMIT_MSG="sync(frontend): update from ${{ github.repository }}@${GITHUB_SHA::8}
+
+            Branch  : ${{ github.ref_name }}
+            Commit  : ${{ github.sha }}
+            Autor   : ${{ github.actor }}
+            Trigger : ${{ github.event_name }}"
+
+            git commit -m "$COMMIT_MSG"
+            git push
+            echo "✅ Sincronização concluída com sucesso."
+          fi
