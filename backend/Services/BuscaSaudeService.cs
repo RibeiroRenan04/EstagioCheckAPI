@@ -1,65 +1,113 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace EstagioCheck.API.Services;
 
-/// <summary>Consulta estabelecimentos de saúde do DF via API pública do OpenDataSUS (CNES).</summary>
-public class BuscaSaudeService(IHttpClientFactory httpClientFactory, ILogger<BuscaSaudeService> logger)
+/// <summary>
+/// Consulta unidades de saúde do DF (Busca Saúde) via API pública do CNES/OpenDataSUS.
+/// A API só permite filtrar por UF/município/tipo (não por nome) e devolve no máximo
+/// 20 registros por página, então paginamos a lista completa do DF, guardamos em cache
+/// e filtramos o nome aqui no servidor.
+/// </summary>
+public class BuscaSaudeService(
+    IHttpClientFactory httpClientFactory,
+    IMemoryCache cache,
+    ILogger<BuscaSaudeService> logger)
 {
     private const string BaseUrl = "https://apidadosabertos.saude.gov.br/cnes/estabelecimentos";
-    // Código UF do Distrito Federal
-    private const int CoUfDf = 53;
+    // Código UF do Distrito Federal no IBGE/CNES.
+    private const int CodigoUfDf = 53;
+    // Tipo 2 = "CENTRO DE SAUDE/UNIDADE BASICA" (UBS) — equivalente ao Busca Saúde UBS da SES-DF.
+    public const int TipoUbs = 2;
+    // A API ignora limites acima de 20 por página.
+    private const int PageSize = 40;
+    // Trava de segurança para o laço de paginação (70 páginas = 2800 unidades).
+    private const int MaxPages = 70;
 
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromHours(6);
+
+    /// <summary>
+    /// Busca unidades de saúde do DF, opcionalmente filtrando por <paramref name="termo"/>
+    /// (nome ou endereço, sem diferenciar acentos/maiúsculas).
+    /// </summary>
     public async Task<List<BuscaSaudeEstabelecimentoDto>> BuscarAsync(
         string? termo = null,
-        string? municipio = null,
-        int limit = 50,
-        int offset = 0)
+        int tipoUnidade = TipoUbs,
+        int max = 50)
     {
-        var client = httpClientFactory.CreateClient("BuscaSaude");
+        var todos = await ObterUnidadesDfAsync(tipoUnidade);
 
-        var queryParams = new List<string>
-        {
-            $"co_uf={CoUfDf}",
-            $"limit={limit}",
-            $"offset={offset}"
-        };
-
-        if (!string.IsNullOrWhiteSpace(municipio))
-            queryParams.Add($"no_municipio={Uri.EscapeDataString(municipio.ToUpper())}");
-
+        IEnumerable<BuscaSaudeEstabelecimentoDto> resultado = todos;
         if (!string.IsNullOrWhiteSpace(termo))
-            queryParams.Add($"no_fantasia={Uri.EscapeDataString(termo.ToUpper())}");
+        {
+            var alvo = Normalizar(termo);
+            resultado = todos.Where(e =>
+                Normalizar(e.Nome).Contains(alvo) ||
+                Normalizar(e.Endereco).Contains(alvo));
+        }
 
-        var url = $"{BaseUrl}?{string.Join("&", queryParams)}";
+        return resultado.Take(max).ToList();
+    }
+
+    /// <summary>Lista completa (em cache) das unidades do DF de um tipo, paginando a API do CNES.</summary>
+    private async Task<List<BuscaSaudeEstabelecimentoDto>> ObterUnidadesDfAsync(int tipoUnidade)
+    {
+        var cacheKey = $"cnes_df_{tipoUnidade}";
+        if (cache.TryGetValue(cacheKey, out List<BuscaSaudeEstabelecimentoDto>? cached) && cached is not null)
+            return cached;
+
+        var client = httpClientFactory.CreateClient("BuscaSaude");
+        var unidades = new List<BuscaSaudeEstabelecimentoDto>();
 
         try
         {
-            var response = await client.GetAsync(url);
-            response.EnsureSuccessStatusCode();
+            for (var pagina = 0; pagina < MaxPages; pagina++)
+            {
+                var offset = pagina * PageSize;
+                var url = $"{BaseUrl}?codigo_uf={CodigoUfDf}&codigo_tipo_unidade={tipoUnidade}&limit={PageSize}&offset={offset}";
 
-            var json = await response.Content.ReadAsStringAsync();
-            var root = JsonSerializer.Deserialize<CnesRoot>(json, JsonOptions);
+                var response = await client.GetAsync(url);
+                response.EnsureSuccessStatusCode();
 
-            return root?.Estabelecimentos
-                .Where(e => e.Latitude.HasValue && e.Longitude.HasValue)
-                .Select(e => new BuscaSaudeEstabelecimentoDto(
-                    CodigoCnes: e.CodigoCnes.ToString(),
-                    Nome: !string.IsNullOrEmpty(e.NomeFantasia) ? e.NomeFantasia : e.NomeRazaoSocial,
-                    Endereco: FormatarEndereco(e),
-                    Latitude: e.Latitude!.Value,
-                    Longitude: e.Longitude!.Value,
-                    Telefone: e.Telefone,
-                    TurnoAtendimento: e.DescricaoTurnoAtendimento
-                ))
-                .ToList() ?? [];
+                var json = await response.Content.ReadAsStringAsync();
+                var root = JsonSerializer.Deserialize<CnesRoot>(json, JsonOptions);
+                var estabelecimentos = root?.Estabelecimentos ?? [];
+
+                unidades.AddRange(estabelecimentos
+                    .Where(e => e.Latitude.HasValue && e.Longitude.HasValue)
+                    .Select(Map));
+
+                // Última página: veio menos que o tamanho cheio.
+                if (estabelecimentos.Count < PageSize) break;
+            }
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Erro ao consultar API BuscaSaúde DF. URL: {Url}", url);
-            throw;
+            logger.LogError(ex, "Erro ao consultar API CNES (Busca Saúde DF).");
+            // Se já carregamos algo, devolvemos o parcial; senão propaga.
+            if (unidades.Count == 0) throw;
         }
+
+        var ordenadas = unidades
+            .OrderBy(e => e.Nome, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        cache.Set(cacheKey, ordenadas, CacheTtl);
+        return ordenadas;
     }
+
+    private static BuscaSaudeEstabelecimentoDto Map(CnesEstabelecimento e) => new(
+        CodigoCnes: e.CodigoCnes.ToString(),
+        Nome: !string.IsNullOrEmpty(e.NomeFantasia) ? e.NomeFantasia : e.NomeRazaoSocial,
+        Endereco: FormatarEndereco(e),
+        Latitude: e.Latitude!.Value,
+        Longitude: e.Longitude!.Value,
+        Telefone: e.Telefone,
+        TurnoAtendimento: e.DescricaoTurnoAtendimento
+    );
 
     private static string FormatarEndereco(CnesEstabelecimento e)
     {
@@ -69,6 +117,17 @@ public class BuscaSaudeService(IHttpClientFactory httpClientFactory, ILogger<Bus
         if (!string.IsNullOrEmpty(e.BairroEstabelecimento)) partes.Add(e.BairroEstabelecimento);
         if (!string.IsNullOrEmpty(e.CodigoCep)) partes.Add(e.CodigoCep);
         return string.Join(", ", partes);
+    }
+
+    /// <summary>Remove acentos e normaliza para maiúsculas para comparação tolerante.</summary>
+    private static string Normalizar(string texto)
+    {
+        var decomposto = texto.Trim().ToUpperInvariant().Normalize(NormalizationForm.FormD);
+        var sb = new StringBuilder(decomposto.Length);
+        foreach (var ch in decomposto)
+            if (CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
+                sb.Append(ch);
+        return sb.ToString();
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

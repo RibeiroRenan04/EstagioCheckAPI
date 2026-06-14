@@ -50,6 +50,9 @@ public class FollowupDto
     public DateTime UpdatedAt { get; init; }
 }
 
+/// <summary>Retorno da busca de aluno por RGM (para preencher o acompanhamento).</summary>
+public record StudentLookupDto(Guid StudentId, string FullName, string? Rgm);
+
 public record CreateFollowupDto(
     [Required] Guid StudentId,
     Guid? ScheduleId,

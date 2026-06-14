@@ -119,38 +119,21 @@ public class AttendanceController(AppDbContext db, GeoService geo) : ControllerB
         if (dto.Type != "check_in" && dto.Type != "check_out")
             return BadRequest(new { message = "Tipo inválido." });
 
-        // Determina status por geolocalização
-        string status = "irregular";
-        string? irregularityReason = null;
-        double? distanceMeters = null;
+        var agora = DateTime.UtcNow;
 
-        if (dto.LocationId.HasValue)
-        {
-            var location = await db.Locations.FindAsync(dto.LocationId.Value);
-            if (location != null)
-            {
-                distanceMeters = geo.HaversineMeters(dto.Latitude, dto.Longitude,
-                    location.Latitude, location.Longitude);
-                if (distanceMeters <= location.RadiusMeters)
-                    status = "aprovado";
-                else
-                    irregularityReason = $"Distância {distanceMeters:0}m excede raio de {location.RadiusMeters}m";
-            }
-        }
-        else
-        {
-            // Sem local definido → pendente para validação manual
-            status = "pendente";
-        }
+        // Validação inteligente: geolocalização (distância) + janela de horário do turno.
+        var location = dto.LocationId.HasValue
+            ? await db.Locations.FindAsync(dto.LocationId.Value)
+            : null;
+        var (status, irregularityReason, distanceMeters) =
+            AvaliarRegistro(location, dto.Latitude, dto.Longitude, dto.AccuracyMeters, agora);
 
-        // Processa foto (base64 → salva localmente ou em blob storage)
+        // Foto do registro: guardamos o data URI completo (MVP). Limite de ~5 MB
+        // para proteger o banco; o frontend já comprime a imagem antes de enviar.
+        const int MaxFotoChars = 7_000_000;
         string? photoUrl = null;
-        if (!string.IsNullOrEmpty(dto.PhotoBase64))
-        {
-            // Em produção: enviar para Azure Blob ou S3
-            // Para MVP: salva como data URI (pode ser substituído)
-            photoUrl = $"data:image/jpeg;base64,{dto.PhotoBase64[..Math.Min(50, dto.PhotoBase64.Length)]}...";
-        }
+        if (!string.IsNullOrEmpty(dto.PhotoBase64) && dto.PhotoBase64.Length <= MaxFotoChars)
+            photoUrl = dto.PhotoBase64;
 
         var record = new AttendanceRecord
         {
@@ -158,7 +141,7 @@ public class AttendanceController(AppDbContext db, GeoService geo) : ControllerB
             ScheduleId = dto.ScheduleId,
             LocationId = dto.LocationId,
             Type = dto.Type,
-            RecordedAt = DateTime.UtcNow,
+            RecordedAt = agora,
             Latitude = dto.Latitude,
             Longitude = dto.Longitude,
             DistanceMeters = distanceMeters,
@@ -200,6 +183,61 @@ public class AttendanceController(AppDbContext db, GeoService geo) : ControllerB
 
         await db.SaveChangesAsync();
         return Ok(Map(record));
+    }
+
+    // Tolerância (minutos) aplicada à janela do turno antes de marcar como pendente.
+    private const int ToleranciaTurnoMin = 30;
+    // Fuso de Brasília (UTC-3, sem horário de verão) para comparar o horário do turno.
+    private const int OffsetBrasiliaHoras = -3;
+
+    /// <summary>
+    /// Validação inteligente do registro: combina distância (geofence, ajustada pela precisão do GPS),
+    /// janela de horário do turno e a regra de sexta-feira (registro na instituição de ensino).
+    /// - Sem local definido → "pendente" (validação manual).
+    /// - Fora do raio OU sexta-feira fora da instituição → "irregular".
+    /// - Dentro do raio, porém fora do horário do turno → "pendente".
+    /// - Dentro do raio e dentro do horário → "aprovado".
+    /// </summary>
+    private (string status, string? reason, double? distance) AvaliarRegistro(
+        Location? location, double lat, double lon, double? accuracyMeters, DateTime recordedAtUtc)
+    {
+        if (location == null)
+            return ("pendente", "Sem local vinculado. Aguardando validação manual.", null);
+
+        var distance = geo.HaversineMeters(lat, lon, location.Latitude, location.Longitude);
+        var motivos = new List<string>();
+
+        // Distância efetiva considera a margem de erro do GPS (mais tolerante).
+        var precisao = accuracyMeters.GetValueOrDefault(0);
+        var distanciaEfetiva = Math.Max(0, distance - precisao);
+        var foraDoRaio = distanciaEfetiva > location.RadiusMeters;
+        if (foraDoRaio)
+            motivos.Add($"Fora do raio ({distance:0}m, precisão GPS ±{precisao:0}m; limite {location.RadiusMeters}m)");
+
+        var localDateTime = recordedAtUtc.AddHours(OffsetBrasiliaHoras);
+        var horaLocal = localDateTime.TimeOfDay;
+        var foraDoTurno = false;
+        if (TimeSpan.TryParse(location.ShiftStart, out var inicio) &&
+            TimeSpan.TryParse(location.ShiftEnd, out var fim))
+        {
+            var tol = TimeSpan.FromMinutes(ToleranciaTurnoMin);
+            if (horaLocal < inicio - tol || horaLocal > fim + tol)
+            {
+                foraDoTurno = true;
+                motivos.Add($"Registro às {horaLocal:hh\\:mm} fora do turno ({location.ShiftStart}–{location.ShiftEnd})");
+            }
+        }
+
+        // Regra de sexta-feira: o registro deve ser feito na instituição de ensino.
+        var sextaForaInstituicao = localDateTime.DayOfWeek == DayOfWeek.Friday && !location.IsInstitution;
+        if (sextaForaInstituicao)
+            motivos.Add("Sexta-feira: o registro deve ser feito na instituição de ensino");
+
+        if (foraDoRaio || sextaForaInstituicao)
+            return ("irregular", string.Join("; ", motivos), distance);
+        if (foraDoTurno)
+            return ("pendente", string.Join("; ", motivos), distance);
+        return ("aprovado", null, distance);
     }
 
     private static string ShiftFromHour(int h) =>

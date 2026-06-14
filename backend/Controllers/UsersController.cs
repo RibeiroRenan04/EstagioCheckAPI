@@ -137,16 +137,24 @@ public class UsersController(AppDbContext db) : ControllerBase
     {
         int imported = 0, updated = 0;
         var errors = new List<string>();
+        var emailsUsados = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var s in dto.Students)
         {
             try
             {
-                var existing = await db.Users.FirstOrDefaultAsync(u => u.Rgm == s.Rgm);
+                var rgm = s.Rgm.Trim();
+                var existing = await db.Users.FirstOrDefaultAsync(u => u.Rgm == rgm);
                 if (existing != null)
                 {
                     existing.Semester = s.Semester;
                     existing.Shift = s.Shift.ToLower();
+                    // Preenche o e-mail institucional se ainda não houver.
+                    if (string.IsNullOrEmpty(existing.Email))
+                    {
+                        existing.Email = await GerarEmailInstitucionalAsync(s.FullName, emailsUsados);
+                        existing.MustSetEmail = false;
+                    }
                     existing.UpdatedAt = DateTime.UtcNow;
                     updated++;
                 }
@@ -155,14 +163,15 @@ public class UsersController(AppDbContext db) : ControllerBase
                     db.Users.Add(new ApplicationUser
                     {
                         FullName = s.FullName.Trim(),
-                        Email = null,
-                        PasswordHash = BCrypt.Net.BCrypt.HashPassword(s.Rgm),
+                        // E-mail institucional gerado automaticamente: nome.ultimonome@cs.udf.edu.br
+                        Email = await GerarEmailInstitucionalAsync(s.FullName, emailsUsados),
+                        PasswordHash = BCrypt.Net.BCrypt.HashPassword(rgm),
                         Role = "aluno",
-                        Rgm = s.Rgm.Trim(),
+                        Rgm = rgm, // o RGM é a matrícula do aluno
                         Semester = s.Semester,
                         Shift = s.Shift.ToLower(),
                         MustChangePassword = true,
-                        MustSetEmail = true
+                        MustSetEmail = false
                     });
                     imported++;
                 }
@@ -175,6 +184,52 @@ public class UsersController(AppDbContext db) : ControllerBase
 
         await db.SaveChangesAsync();
         return Ok(new BulkImportResponseDto(imported, updated, errors));
+    }
+
+    // ── Geração de e-mail institucional ───────────────────────────────────────
+    private const string DominioInstitucional = "@cs.udf.edu.br";
+
+    /// <summary>
+    /// Gera um e-mail institucional no formato "primeironome.ultimonome@cs.udf.edu.br",
+    /// garantindo unicidade (no lote e no banco) com sufixo numérico em caso de colisão.
+    /// </summary>
+    private async Task<string> GerarEmailInstitucionalAsync(string fullName, HashSet<string> emailsUsados)
+    {
+        var prefixo = MontarPrefixoEmail(fullName);
+        var candidato = $"{prefixo}{DominioInstitucional}";
+        var n = 1;
+        while (emailsUsados.Contains(candidato) || await db.Users.AnyAsync(u => u.Email == candidato))
+        {
+            n++;
+            candidato = $"{prefixo}{n}{DominioInstitucional}";
+        }
+        emailsUsados.Add(candidato);
+        return candidato;
+    }
+
+    /// <summary>"João da Silva Santos" → "joao.santos" (sem acentos, minúsculo).</summary>
+    private static string MontarPrefixoEmail(string fullName)
+    {
+        var partes = RemoverAcentos(fullName)
+            .ToLowerInvariant()
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => new string(p.Where(char.IsLetterOrDigit).ToArray()))
+            .Where(p => p.Length > 0)
+            .ToList();
+
+        if (partes.Count == 0) return "aluno";
+        if (partes.Count == 1) return partes[0];
+        return $"{partes[0]}.{partes[^1]}";
+    }
+
+    private static string RemoverAcentos(string texto)
+    {
+        var decomposto = texto.Trim().Normalize(System.Text.NormalizationForm.FormD);
+        var sb = new System.Text.StringBuilder(decomposto.Length);
+        foreach (var ch in decomposto)
+            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) != System.Globalization.UnicodeCategory.NonSpacingMark)
+                sb.Append(ch);
+        return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
     }
 
     // ── Avançar semestre ──────────────────────────────────────────────────────
@@ -242,7 +297,6 @@ public class UsersController(AppDbContext db) : ControllerBase
         Id = u.Id,
         FullName = u.FullName,
         Email = u.Email,
-        Matricula = u.Matricula,
         Rgm = u.Rgm,
         Semester = u.Semester,
         Shift = u.Shift,

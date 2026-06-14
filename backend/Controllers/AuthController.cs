@@ -13,33 +13,8 @@ namespace EstagioCheck.API.Controllers;
 [Route("api/[controller]")]
 public class AuthController(AppDbContext db, TokenService tokenService, EmailService emailService) : ControllerBase
 {
-    private static readonly string[] AllowedRoles = ["aluno", "preceptor", "supervisor"];
-
-    [HttpPost("register")]
-    public async Task<ActionResult<AuthResponseDto>> Register([FromBody] RegisterDto dto)
-    {
-        if (!AllowedRoles.Contains(dto.Role))
-            return BadRequest(new { message = "Papel inválido." });
-
-        var exists = await db.Users.AnyAsync(u => u.Email == dto.Email.ToLower());
-        if (exists)
-            return Conflict(new { message = "E-mail já cadastrado." });
-
-        var user = new ApplicationUser
-        {
-            FullName = dto.FullName.Trim(),
-            Email = dto.Email.Trim().ToLower(),
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
-            Role = dto.Role,
-            Matricula = dto.Matricula?.Trim()
-        };
-
-        db.Users.Add(user);
-        await db.SaveChangesAsync();
-
-        var token = tokenService.GenerateToken(user);
-        return Ok(new AuthResponseDto(token, user.Id.ToString(), user.Email, user.FullName, user.Role));
-    }
+    // O autocadastro foi removido: alunos são criados via importação e
+    // preceptores/supervisores pelo cadastro do professor (UsersController).
 
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponseDto>> Login([FromBody] LoginDto dto)

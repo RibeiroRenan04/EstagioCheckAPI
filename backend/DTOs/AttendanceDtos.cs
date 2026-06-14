@@ -9,7 +9,8 @@ public record CreateAttendanceDto(
     Guid? ScheduleId,
     Guid? LocationId,
     string? ActivitiesDescription,
-    string? PhotoBase64
+    string? PhotoBase64,
+    double? AccuracyMeters // precisão do GPS em metros (opcional)
 );
 
 public record ValidateAttendanceDto(
