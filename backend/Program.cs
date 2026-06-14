@@ -49,10 +49,13 @@ builder.Services.AddAuthorization();
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<GeoService>();
 builder.Services.AddScoped<EmailService>();
+builder.Services.AddMemoryCache();
+builder.Services.AddScoped<CertificateService>();
 builder.Services.AddScoped<BuscaSaudeService>();
 builder.Services.AddHttpClient("BuscaSaude", client =>
 {
-    client.Timeout = TimeSpan.FromSeconds(15);
+    // Paginamos várias páginas do CNES em sequência, então damos uma folga maior.
+    client.Timeout = TimeSpan.FromSeconds(30);
     client.DefaultRequestHeaders.Add("Accept", "application/json");
 });
 builder.Services.AddHttpContextAccessor();

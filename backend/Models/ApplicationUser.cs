@@ -11,9 +11,7 @@ public class ApplicationUser
     /// <summary>"aluno" | "preceptor" | "supervisor"</summary>
     public string Role { get; set; } = "aluno";
 
-    public string? Matricula { get; set; }
-
-    /// <summary>Registro Geral de Matriculado – identificador institucional do aluno.</summary>
+    /// <summary>Registro Geral de Matriculado (RGM) – é a própria matrícula do aluno.</summary>
     public string? Rgm { get; set; }
 
     /// <summary>Semestre atual do aluno (7 ou 8).</summary>

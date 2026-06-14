@@ -104,16 +104,15 @@ public class LocationsController(AppDbContext db, BuscaSaudeService buscaSaude) 
     }
 
     // ── Busca Saúde DF (CNES / OpenDataSUS) ──────────────────────────────────
-    /// <summary>Pesquisa estabelecimentos de saúde no DF via API CNES.</summary>
+    /// <summary>Pesquisa unidades de saúde do DF via API pública do CNES (default: UBS).</summary>
     [HttpGet("busca-saude")]
     [Authorize(Roles = "supervisor")]
     public async Task<ActionResult<List<BuscaSaudeEstabelecimentoDto>>> BuscarSaude(
         [FromQuery] string? q,
-        [FromQuery] string? municipio = "BRASILIA",
-        [FromQuery] int limit = 50,
-        [FromQuery] int offset = 0)
+        [FromQuery] int tipo = BuscaSaudeService.TipoUbs,
+        [FromQuery] int limit = 50)
     {
-        var results = await buscaSaude.BuscarAsync(q, municipio, limit, offset);
+        var results = await buscaSaude.BuscarAsync(q, tipo, limit);
         return Ok(results);
     }
 

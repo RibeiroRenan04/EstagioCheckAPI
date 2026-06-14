@@ -62,6 +62,22 @@ public class FollowupsController(AppDbContext db, IHttpContextAccessor httpConte
         return Ok(Map(f));
     }
 
+    /// <summary>Busca um aluno pelo RGM para preencher o acompanhamento (nome + id).</summary>
+    [HttpGet("student-by-rgm/{rgm}")]
+    [Authorize(Roles = "preceptor,supervisor")]
+    public async Task<ActionResult<StudentLookupDto>> GetStudentByRgm(string rgm)
+    {
+        var termo = rgm.Trim();
+        var student = await db.Users
+            .Where(u => u.Role == "aluno" && u.Rgm == termo)
+            .Select(u => new StudentLookupDto(u.Id, u.FullName, u.Rgm))
+            .FirstOrDefaultAsync();
+
+        return student == null
+            ? NotFound(new { message = "Aluno não encontrado para esse RGM." })
+            : Ok(student);
+    }
+
     [HttpPost]
     [Authorize(Roles = "preceptor,supervisor")]
     public async Task<ActionResult<FollowupDto>> Create([FromBody] CreateFollowupDto dto)
