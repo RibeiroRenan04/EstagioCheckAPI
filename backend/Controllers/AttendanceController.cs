@@ -121,12 +121,15 @@ public class AttendanceController(AppDbContext db, GeoService geo) : ControllerB
 
         var agora = DateTime.UtcNow;
 
+        var aluno = await db.Users.FirstOrDefaultAsync(u => u.Id == userId);
+
         // Validação inteligente: geolocalização (distância) + janela de horário do turno.
         var location = dto.LocationId.HasValue
             ? await db.Locations.FindAsync(dto.LocationId.Value)
             : null;
-        var (status, irregularityReason, distanceMeters) =
-            AvaliarRegistro(location, dto.Latitude, dto.Longitude, dto.AccuracyMeters, agora);
+        var (status, irregularityReason, distanceMeters) = AvaliarRegistro(
+            location, dto.Latitude, dto.Longitude, dto.AccuracyMeters, agora,
+            dto.Type, aluno?.AllowLateArrival == true);
 
         // Foto do registro: guardamos o data URI completo (MVP). Limite de ~5 MB
         // para proteger o banco; o frontend já comprime a imagem antes de enviar.
@@ -152,6 +155,23 @@ public class AttendanceController(AppDbContext db, GeoService geo) : ControllerB
         };
 
         db.AttendanceRecords.Add(record);
+
+        // Registro irregular abre automaticamente a ocorrência do fluxo de análise:
+        // o preceptor toma ciência e observa, mas quem decide é o professor.
+        if (status == "irregular")
+        {
+            db.PointIrregularities.Add(new PointIrregularity
+            {
+                StudentId = userId,
+                AttendanceRecordId = record.Id,
+                ScheduleId = dto.ScheduleId,
+                Type = "fora_do_local",
+                OccurredOn = DateOnly.FromDateTime(agora.AddHours(OffsetBrasiliaHoras)),
+                Description = irregularityReason ?? "Registro de ponto fora das regras.",
+                Status = PointIrregularity.StatusAguardandoPreceptor
+            });
+        }
+
         await db.SaveChangesAsync();
 
         await db.Entry(record).Reference(r => r.Student).LoadAsync();
@@ -161,8 +181,13 @@ public class AttendanceController(AppDbContext db, GeoService geo) : ControllerB
         return Ok(Map(record));
     }
 
+    /// <summary>
+    /// Validação manual do registro de ponto. Exclusiva do professor: o preceptor
+    /// acompanha e observa a ocorrência (ver IrregularitiesController), mas não
+    /// aprova nem altera a situação de um registro.
+    /// </summary>
     [HttpPatch("{id}/validate")]
-    [Authorize(Roles = "preceptor,supervisor")]
+    [Authorize(Roles = Roles.Supervisor)]
     public async Task<ActionResult<AttendanceRecordDto>> Validate(Guid id, [FromBody] ValidateAttendanceDto dto)
     {
         var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)
@@ -197,9 +222,14 @@ public class AttendanceController(AppDbContext db, GeoService geo) : ControllerB
     /// - Fora do raio OU sexta-feira fora da instituição → "irregular".
     /// - Dentro do raio, porém fora do horário do turno → "pendente".
     /// - Dentro do raio e dentro do horário → "aprovado".
+    ///
+    /// Alunos com permissão de atraso previamente autorizada não são penalizados por
+    /// chegar depois do início do turno; a carga horária do dia continua sendo exigida,
+    /// pois o cálculo de horas usa o par check-in/check-out.
     /// </summary>
     private (string status, string? reason, double? distance) AvaliarRegistro(
-        Location? location, double lat, double lon, double? accuracyMeters, DateTime recordedAtUtc)
+        Location? location, double lat, double lon, double? accuracyMeters, DateTime recordedAtUtc,
+        string tipo, bool permiteAtraso = false)
     {
         if (location == null)
             return ("pendente", "Sem local vinculado. Aguardando validação manual.", null);
@@ -221,10 +251,23 @@ public class AttendanceController(AppDbContext db, GeoService geo) : ControllerB
             TimeSpan.TryParse(location.ShiftEnd, out var fim))
         {
             var tol = TimeSpan.FromMinutes(ToleranciaTurnoMin);
-            if (horaLocal < inicio - tol || horaLocal > fim + tol)
+            var antesDoInicio = horaLocal < inicio - tol;
+            // A permissão de atraso libera apenas a chegada tardia (o limite inferior
+            // do turno); chegar antes ou sair depois continua fora da janela.
+            var depoisDoFim = horaLocal > fim + tol;
+            // O atraso só faz sentido na chegada: o check-out acontece no fim do turno.
+            var atrasado = tipo == "check_in" && !antesDoInicio && !depoisDoFim
+                        && horaLocal > inicio + tol;
+
+            if (antesDoInicio || depoisDoFim)
             {
                 foraDoTurno = true;
                 motivos.Add($"Registro às {horaLocal:hh\\:mm} fora do turno ({location.ShiftStart}–{location.ShiftEnd})");
+            }
+            else if (atrasado && !permiteAtraso)
+            {
+                foraDoTurno = true;
+                motivos.Add($"Chegada às {horaLocal:hh\\:mm}, após o início do turno ({location.ShiftStart})");
             }
         }
 

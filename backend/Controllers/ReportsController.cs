@@ -1,4 +1,5 @@
 using EstagioCheck.API.Data;
+using EstagioCheck.API.Models;
 using EstagioCheck.API.DTOs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -8,7 +9,7 @@ namespace EstagioCheck.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "supervisor")]
+[Authorize(Roles = Roles.Gestao)]
 public class ReportsController(AppDbContext db) : ControllerBase
 {
     [HttpGet]

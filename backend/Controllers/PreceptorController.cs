@@ -1,4 +1,5 @@
 using EstagioCheck.API.Data;
+using EstagioCheck.API.Models;
 using EstagioCheck.API.DTOs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,7 +11,7 @@ namespace EstagioCheck.API.Controllers;
 /// <summary>Visão específica para preceptores: alunos e presenças irregulares.</summary>
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "preceptor,supervisor")]
+[Authorize(Roles = Roles.AcompanhamentoEGestao)]
 public class PreceptorController(AppDbContext db) : ControllerBase
 {
     [HttpGet("students")]

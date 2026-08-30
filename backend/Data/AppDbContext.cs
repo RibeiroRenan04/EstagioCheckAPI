@@ -15,6 +15,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<AttendanceRecord> AttendanceRecords => Set<AttendanceRecord>();
     public DbSet<Evaluation> Evaluations => Set<Evaluation>();
     public DbSet<FormativeFollowup> FormativeFollowups => Set<FormativeFollowup>();
+    public DbSet<PointIrregularity> PointIrregularities => Set<PointIrregularity>();
 
     // As propriedades das entidades permanecem em inglês; o mapeamento aponta para
     // o schema do banco em português (tabelas e colunas).
@@ -37,6 +38,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.Shift).HasColumnName("Turno").HasMaxLength(10);
             e.Property(x => x.Phone).HasColumnName("Telefone").HasMaxLength(30);
             e.Property(x => x.Institution).HasColumnName("Instituicao").HasMaxLength(200);
+            e.Property(x => x.AllowLateArrival).HasColumnName("PermissaoAtraso").HasDefaultValue(false);
+            e.Property(x => x.LateArrivalNote).HasColumnName("ObservacaoAtraso");
+            e.Property(x => x.TermsAcceptedAt).HasColumnName("TermoAceitoEm");
             e.Property(x => x.MustChangePassword).HasColumnName("DeveTrocarSenha").HasDefaultValue(false);
             e.Property(x => x.MustSetEmail).HasColumnName("DeveDefinirEmail").HasDefaultValue(false);
             e.Property(x => x.IsActive).HasColumnName("Ativo").HasDefaultValue(true);
@@ -274,6 +278,55 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasOne(x => x.Location)
              .WithMany()
              .HasForeignKey(x => x.LocationId)
+             .OnDelete(DeleteBehavior.SetNull)
+             .IsRequired(false);
+        });
+
+        // ── PointIrregularity → Irregularidades ───────────────────────────────
+        mb.Entity<PointIrregularity>(e =>
+        {
+            e.ToTable("Irregularidades");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("IdIrregularidade");
+            e.Property(x => x.StudentId).HasColumnName("IdEstudante");
+            e.Property(x => x.AttendanceRecordId).HasColumnName("IdPresenca");
+            e.Property(x => x.ScheduleId).HasColumnName("IdEscala");
+            e.Property(x => x.Type).HasColumnName("Tipo").HasMaxLength(30);
+            e.Property(x => x.OccurredOn).HasColumnName("DataOcorrencia");
+            e.Property(x => x.Description).HasColumnName("Descricao");
+            e.Property(x => x.Status).HasColumnName("Status").HasMaxLength(30)
+             .HasDefaultValue(PointIrregularity.StatusAguardandoPreceptor);
+            e.Property(x => x.PreceptorId).HasColumnName("IdPreceptor");
+            e.Property(x => x.PreceptorNote).HasColumnName("ObservacaoPreceptor");
+            e.Property(x => x.PreceptorAcknowledgedAt).HasColumnName("CienciaPreceptorEm");
+            e.Property(x => x.ProfessorId).HasColumnName("IdProfessor");
+            e.Property(x => x.ProfessorNote).HasColumnName("ParecerProfessor");
+            e.Property(x => x.ProfessorDecidedAt).HasColumnName("DecididoProfessorEm");
+            e.Property(x => x.CreatedAt).HasColumnName("CriadoEm");
+            e.Property(x => x.UpdatedAt).HasColumnName("AtualizadoEm");
+            e.HasIndex(x => x.Status);
+            e.HasOne(x => x.Student)
+             .WithMany(u => u.IrregularitiesAsStudent)
+             .HasForeignKey(x => x.StudentId)
+             .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.AttendanceRecord)
+             .WithMany()
+             .HasForeignKey(x => x.AttendanceRecordId)
+             .OnDelete(DeleteBehavior.SetNull)
+             .IsRequired(false);
+            e.HasOne(x => x.Schedule)
+             .WithMany()
+             .HasForeignKey(x => x.ScheduleId)
+             .OnDelete(DeleteBehavior.SetNull)
+             .IsRequired(false);
+            e.HasOne(x => x.Preceptor)
+             .WithMany()
+             .HasForeignKey(x => x.PreceptorId)
+             .OnDelete(DeleteBehavior.SetNull)
+             .IsRequired(false);
+            e.HasOne(x => x.Professor)
+             .WithMany()
+             .HasForeignKey(x => x.ProfessorId)
              .OnDelete(DeleteBehavior.SetNull)
              .IsRequired(false);
         });

@@ -128,11 +128,49 @@ Fluxo de autenticação:
 
 | Perfil | Identificador | Permissões |
 |---|---|---|
-| Aluno | `aluno` | Check-in/out, histórico próprio, dashboard pessoal |
-| Preceptor | `preceptor` | Acompanhamentos, visualização do grupo, validação |
-| Supervisor | `supervisor` | Acesso total ao sistema |
+| Aluno | `aluno` | Check-in/out, histórico próprio, dashboard pessoal, registro de irregularidades |
+| Preceptor | `preceptor` | Acompanhamentos, visualização do grupo, ciência e observação de irregularidades |
+| Professor (supervisor) | `supervisor` | Acesso total ao sistema; única decisão sobre presenças e irregularidades |
+| Coordenadora | `coordenadora` | Mesma visão do professor, **somente leitura** (secretaria/estagiária) |
 
 O controle de acesso é aplicado tanto no frontend (route guards) quanto no backend (claims JWT + `[Authorize(Roles)]`).
+
+### Fluxo de irregularidades do ponto
+
+O preceptor **não valida nem altera a situação** de uma irregularidade — ele registra
+ciência e observação, e a ocorrência é encaminhada ao professor responsável:
+
+```
+1. Aluno registra a irregularidade  (ou o sistema gera a partir de um ponto fora das regras)
+        ↓  status: aguardando_preceptor
+2. Preceptor toma ciência
+3. Preceptor insere justificativa/observação
+4. Ocorrência encaminhada ao professor
+        ↓  status: aguardando_professor
+5. Professor analisa
+6. Professor aprova, nega ou acrescenta parecer
+        ↓  status: aprovada | negada
+```
+
+Aprovar uma ocorrência vinculada a um registro de ponto também regulariza esse registro.
+
+### Permissão de atraso
+
+Alunos previamente autorizados pelo professor (`PermissaoAtraso` em `Usuarios`) podem
+chegar depois do horário previsto de início sem que o registro seja marcado como
+irregularidade de horário. **A carga horária do dia continua sendo exigida** — a regra
+vale apenas para o check-in; o check-out segue a janela normal do turno.
+
+### Termo de responsabilidade
+
+Preceptores, professores e coordenadoras precisam aceitar, no primeiro acesso, o termo
+que registra que a senha é pessoal e intransferível e que respondem pelas ações feitas
+com a própria conta (`GET /api/auth/terms`, `POST /api/auth/accept-terms`).
+
+### Formato do RGM
+
+O RGM não usa mais o prefixo **"14"**. A importação de planilhas aceita os dois formatos
+e normaliza automaticamente; a migração `database/005_*.sql` limpa os registros antigos.
 
 ---
 
@@ -246,7 +284,14 @@ Base URL (produção): `https://estagiocheckapi-production.up.railway.app/api`
 | GET/POST/PUT/DELETE | `/locations` | Sim | Locais de estágio |
 | GET | `/preceptor` | Sim (preceptor) | Painel do preceptor |
 | GET | `/reports` | Sim | Relatórios |
-| GET/POST/PUT/DELETE | `/users` | Sim | Gestão de usuários |
+| GET/POST/PUT/DELETE | `/users` | Sim (professor) | Gestão de usuários |
+| PATCH | `/users/{id}/late-permission` | Sim (professor) | Permissão de atraso do aluno |
+| PATCH | `/users/{id}/shift` | Sim (professor) | Troca de turno do aluno |
+| GET/POST | `/irregularities` | Sim | Irregularidades do ponto |
+| PATCH | `/irregularities/{id}/preceptor-review` | Sim (preceptor) | Ciência + observação |
+| PATCH | `/irregularities/{id}/professor-decision` | Sim (professor) | Aprovar ou negar |
+| GET | `/auth/terms` | Não | Texto do termo de responsabilidade |
+| POST | `/auth/accept-terms` | Sim | Registra o aceite do termo |
 
 Documentação interativa disponível em: `/swagger` (somente em Development)
 
@@ -360,12 +405,17 @@ O banco de dados é **PostgreSQL** gerenciado pelo Entity Framework Core com mig
 | `Evaluations` | Avaliações |
 | `PasswordResetCodes` | Códigos temporários de recuperação de senha |
 | `StudentSemesterHistory` | Histórico semestral do aluno |
+| `Irregularidades` | Ocorrências de ponto (fluxo aluno → preceptor → professor) |
 
 ### Scripts SQL adicionais
 
 ```
 database/
-└── 002_udf_features.sql    # Funções e features específicas da UDF
+├── 002_udf_features.sql                  # Funções e features específicas da UDF
+├── 003_rename_to_portuguese.sql          # Schema em português
+├── 004_consolidar_rgm_remover_matricula.sql
+└── 005_irregularidades_e_perfis.sql      # Irregularidades, permissão de atraso,
+                                          # perfil coordenadora, RGM sem o "14"
 ```
 
 ---
