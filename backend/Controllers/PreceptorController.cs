@@ -1,4 +1,5 @@
 using EstagioCheck.API.Data;
+using EstagioCheck.API.Services;
 using EstagioCheck.API.Models;
 using EstagioCheck.API.DTOs;
 using Microsoft.AspNetCore.Authorization;
@@ -34,7 +35,7 @@ public class PreceptorController(AppDbContext db) : ControllerBase
             .Where(m => groupIds.Contains(m.GroupId))
             .ToListAsync();
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = BrasiliaTime.Hoje;
 
         var result = new List<object>();
         foreach (var m in members)

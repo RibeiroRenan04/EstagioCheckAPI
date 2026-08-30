@@ -1,3 +1,5 @@
+using EstagioCheck.API.Services;
+
 namespace EstagioCheck.API.Models;
 
 /// <summary>
@@ -46,8 +48,8 @@ public class PointIrregularity
     public string? ProfessorNote { get; set; }
     public DateTime? ProfessorDecidedAt { get; set; }
 
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime CreatedAt { get; set; } = BrasiliaTime.Agora;
+    public DateTime UpdatedAt { get; set; } = BrasiliaTime.Agora;
 
     // Navigation
     public ApplicationUser Student { get; set; } = null!;

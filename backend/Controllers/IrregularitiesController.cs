@@ -1,6 +1,7 @@
 using EstagioCheck.API.Data;
 using EstagioCheck.API.DTOs;
 using EstagioCheck.API.Models;
+using EstagioCheck.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -88,7 +89,7 @@ public class IrregularitiesController(AppDbContext db) : ControllerBase
         if (!PointIrregularity.TiposValidos.Contains(dto.Type))
             return BadRequest(new { message = "Tipo de irregularidade inválido." });
 
-        if (dto.OccurredOn > DateOnly.FromDateTime(DateTime.UtcNow))
+        if (dto.OccurredOn > BrasiliaTime.Hoje)
             return BadRequest(new { message = "A data da ocorrência não pode ser futura." });
 
         // O registro de presença informado precisa ser do próprio aluno.
@@ -143,9 +144,9 @@ public class IrregularitiesController(AppDbContext db) : ControllerBase
 
         irregularidade.PreceptorId = userId;
         irregularidade.PreceptorNote = string.IsNullOrWhiteSpace(dto.Note) ? null : dto.Note.Trim();
-        irregularidade.PreceptorAcknowledgedAt = DateTime.UtcNow;
+        irregularidade.PreceptorAcknowledgedAt = BrasiliaTime.Agora;
         irregularidade.Status = PointIrregularity.StatusAguardandoProfessor;
-        irregularidade.UpdatedAt = DateTime.UtcNow;
+        irregularidade.UpdatedAt = BrasiliaTime.Agora;
 
         await db.SaveChangesAsync();
 
@@ -166,11 +167,11 @@ public class IrregularitiesController(AppDbContext db) : ControllerBase
 
         irregularidade.ProfessorId = userId;
         irregularidade.ProfessorNote = string.IsNullOrWhiteSpace(dto.Note) ? null : dto.Note.Trim();
-        irregularidade.ProfessorDecidedAt = DateTime.UtcNow;
+        irregularidade.ProfessorDecidedAt = BrasiliaTime.Agora;
         irregularidade.Status = dto.Approve
             ? PointIrregularity.StatusAprovada
             : PointIrregularity.StatusNegada;
-        irregularidade.UpdatedAt = DateTime.UtcNow;
+        irregularidade.UpdatedAt = BrasiliaTime.Agora;
 
         // A decisão do professor reflete na situação do registro de ponto de origem:
         // aprovar a justificativa regulariza a presença; negar mantém a irregularidade.
@@ -182,7 +183,7 @@ public class IrregularitiesController(AppDbContext db) : ControllerBase
             {
                 registro.Status = dto.Approve ? "aprovado" : "irregular";
                 registro.ValidatedById = userId;
-                registro.ValidatedAt = DateTime.UtcNow;
+                registro.ValidatedAt = BrasiliaTime.Agora;
                 if (!dto.Approve && !string.IsNullOrWhiteSpace(dto.Note))
                     registro.IrregularityReason = dto.Note.Trim();
             }

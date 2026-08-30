@@ -1,6 +1,7 @@
 using EstagioCheck.API.Data;
 using EstagioCheck.API.DTOs;
 using EstagioCheck.API.Models;
+using EstagioCheck.API.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -88,7 +89,7 @@ public class FollowupsController(AppDbContext db, IHttpContextAccessor httpConte
         if (student == null)
             return NotFound(new { message = "Aluno não encontrado para esse RGM." });
 
-        var hoje = DateOnly.FromDateTime(DateTime.UtcNow);
+        var hoje = BrasiliaTime.Hoje;
         var groupId = student.GroupMembership?.GroupId;
 
         // Escala do grupo do aluno: prioriza a vigente hoje; senão, a mais recente.
@@ -125,6 +126,80 @@ public class FollowupsController(AppDbContext db, IHttpContextAccessor httpConte
             FollowUpStart = escala?.StartDate,
             FollowUpEnd = escala?.EndDate
         });
+    }
+
+    /// <summary>
+    /// Rodízios do preceptor com os alunos alocados em cada um. O preceptor
+    /// escolhe o aluno pela lista da turma em vez de digitar o RGM de memória;
+    /// cada aluno já vem com o contexto do rodízio (período, turno, local e datas)
+    /// para preencher o acompanhamento de uma vez.
+    /// </summary>
+    [HttpGet("my-schedules")]
+    [Authorize(Roles = Roles.Preceptor)]
+    public async Task<ActionResult<List<ScheduleStudentsDto>>> GetMySchedules()
+    {
+        var userId = CurrentUserId();
+        var hoje = BrasiliaTime.Hoje;
+
+        var escalas = await db.RotationSchedules
+            .Include(s => s.Group)
+            .Include(s => s.Location)
+            .Where(s => s.PreceptorId == userId)
+            .OrderByDescending(s => s.StartDate)
+            .ToListAsync();
+
+        if (escalas.Count == 0) return Ok(new List<ScheduleStudentsDto>());
+
+        // Uma consulta só para os alunos de todas as turmas envolvidas.
+        var grupoIds = escalas.Select(e => e.GroupId).Distinct().ToList();
+        var membros = await db.GroupMemberships
+            .Include(m => m.Student)
+            .Where(m => grupoIds.Contains(m.GroupId) && m.Student.IsActive)
+            .OrderBy(m => m.Student.FullName)
+            .ToListAsync();
+
+        var resultado = escalas.Select(escala => new ScheduleStudentsDto
+        {
+            ScheduleId = escala.Id,
+            PeriodLabel = escala.PeriodLabel,
+            Shift = escala.Shift,
+            ActivityType = escala.ActivityType,
+            GroupId = escala.GroupId,
+            GroupCode = escala.Group?.Code,
+            GroupName = escala.Group?.Name,
+            LocationId = escala.LocationId,
+            LocationName = escala.Location?.Name,
+            StartDate = escala.StartDate,
+            EndDate = escala.EndDate,
+            Current = escala.StartDate <= hoje && escala.EndDate >= hoje,
+            Students = membros
+                .Where(m => m.GroupId == escala.GroupId)
+                .Select(m => new StudentLookupDto
+                {
+                    StudentId = m.StudentId,
+                    FullName = m.Student.FullName,
+                    Rgm = m.Student.Rgm,
+                    Semester = m.Student.Semester,
+                    Shift = escala.Shift,
+                    PeriodLabel = escala.PeriodLabel,
+                    GroupId = escala.GroupId,
+                    GroupCode = escala.Group?.Code,
+                    GroupName = escala.Group?.Name,
+                    ScheduleId = escala.Id,
+                    LocationId = escala.LocationId,
+                    LocationName = escala.Location?.Name,
+                    ActivityType = escala.ActivityType,
+                    FollowUpStart = escala.StartDate,
+                    FollowUpEnd = escala.EndDate
+                })
+                .ToList()
+        })
+        // Rodízio vigente primeiro: é o que o preceptor procura no dia a dia.
+        .OrderByDescending(e => e.Current)
+        .ThenByDescending(e => e.StartDate)
+        .ToList();
+
+        return Ok(resultado);
     }
 
     /// <summary>O acompanhamento do aluno é realizado pelo preceptor.</summary>

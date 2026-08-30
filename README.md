@@ -154,6 +154,16 @@ ciência e observação, e a ocorrência é encaminhada ao professor responsáve
 
 Aprovar uma ocorrência vinculada a um registro de ponto também regulariza esse registro.
 
+### Horário e geolocalização do ponto
+
+Os registros são gravados no **horário de Brasília (GMT-3)**, o fuso oficial do estágio —
+não em UTC. Ver `backend/Services/BrasiliaTime.cs`; a migração `006_*.sql` converte os
+registros antigos.
+
+O ponto **só é aceito dentro do raio da unidade alocada**. Fora do raio a API recusa o
+registro (`400`, `code: "fora_do_raio"`) e o app nem libera a câmera — quem tem um motivo
+legítimo abre uma irregularidade para análise do professor.
+
 ### Permissão de atraso
 
 Alunos previamente autorizados pelo professor (`PermissaoAtraso` em `Usuarios`) podem
@@ -290,6 +300,7 @@ Base URL (produção): `https://estagiocheckapi-production.up.railway.app/api`
 | GET/POST | `/irregularities` | Sim | Irregularidades do ponto |
 | PATCH | `/irregularities/{id}/preceptor-review` | Sim (preceptor) | Ciência + observação |
 | PATCH | `/irregularities/{id}/professor-decision` | Sim (professor) | Aprovar ou negar |
+| GET | `/followups/my-schedules` | Sim (preceptor) | Rodízios do preceptor e alunos alocados |
 | GET | `/auth/terms` | Não | Texto do termo de responsabilidade |
 | POST | `/auth/accept-terms` | Sim | Registra o aceite do termo |
 
@@ -414,8 +425,9 @@ database/
 ├── 002_udf_features.sql                  # Funções e features específicas da UDF
 ├── 003_rename_to_portuguese.sql          # Schema em português
 ├── 004_consolidar_rgm_remover_matricula.sql
-└── 005_irregularidades_e_perfis.sql      # Irregularidades, permissão de atraso,
-                                          # perfil coordenadora, RGM sem o "14"
+├── 005_irregularidades_e_perfis.sql      # Irregularidades, permissão de atraso,
+│                                         # perfil coordenadora, RGM sem o "14"
+└── 006_fuso_brasilia.sql                 # Registros de ponto em GMT-3 (executar UMA vez)
 ```
 
 ---
