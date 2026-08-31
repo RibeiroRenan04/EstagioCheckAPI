@@ -16,6 +16,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Evaluation> Evaluations => Set<Evaluation>();
     public DbSet<FormativeFollowup> FormativeFollowups => Set<FormativeFollowup>();
     public DbSet<PointIrregularity> PointIrregularities => Set<PointIrregularity>();
+    public DbSet<StudentAllocation> StudentAllocations => Set<StudentAllocation>();
+    public DbSet<GeocodingCacheEntry> GeocodingCache => Set<GeocodingCacheEntry>();
 
     // As propriedades das entidades permanecem em inglês; o mapeamento aponta para
     // o schema do banco em português (tabelas e colunas).
@@ -91,8 +93,36 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.ShiftStart).HasColumnName("InicioTurno").HasMaxLength(5);
             e.Property(x => x.ShiftEnd).HasColumnName("FimTurno").HasMaxLength(5);
             e.Property(x => x.CodigoCnes).HasColumnName("CodigoCnes").HasMaxLength(20);
+            // ── Cadastro da unidade de saúde ──
+            e.Property(x => x.Tipo).HasColumnName("Tipo").HasMaxLength(100);
+            e.Property(x => x.Numero).HasColumnName("Numero").HasMaxLength(20);
+            e.Property(x => x.Complemento).HasColumnName("Complemento").HasMaxLength(200);
+            e.Property(x => x.Bairro).HasColumnName("Bairro").HasMaxLength(100);
+            e.Property(x => x.Cidade).HasColumnName("Cidade").HasMaxLength(100);
+            e.Property(x => x.Uf).HasColumnName("UF").HasMaxLength(2);
+            e.Property(x => x.Cep).HasColumnName("CEP").HasMaxLength(10);
+            e.Property(x => x.Telefone).HasColumnName("Telefone").HasMaxLength(30);
+            e.Property(x => x.Ativo).HasColumnName("Ativo").HasDefaultValue(true);
+            // ── Geocodificação ──
+            e.Property(x => x.OrigemCoordenadas).HasColumnName("OrigemCoordenadas").HasMaxLength(30);
+            e.Property(x => x.StatusGeocodificacao).HasColumnName("StatusGeocodificacao").HasMaxLength(30);
+            e.Property(x => x.EnderecoGeocodificado).HasColumnName("EnderecoGeocodificado");
+            e.Property(x => x.PrecisaoLocalizacao).HasColumnName("PrecisaoLocalizacao").HasMaxLength(100);
+            e.Property(x => x.GeocodificadoEm).HasColumnName("GeocodificadoEm");
+            e.Property(x => x.LoteImportacao).HasColumnName("LoteImportacao");
             e.Property(x => x.CreatedAt).HasColumnName("CriadoEm");
+            e.Property(x => x.UpdatedAt).HasColumnName("AtualizadoEm");
+            // Propriedades calculadas não têm coluna.
+            e.Ignore(x => x.EnderecoCompleto);
+            e.Ignore(x => x.CoordenadaManual);
+            e.Ignore(x => x.TemCoordenadas);
             e.HasIndex(x => x.CodigoCnes).IsUnique().HasFilter("\"CodigoCnes\" IS NOT NULL");
+            // Índices dos filtros da tela de unidades.
+            e.HasIndex(x => x.Name);
+            e.HasIndex(x => x.Cep);
+            e.HasIndex(x => x.Cidade);
+            e.HasIndex(x => x.Ativo);
+            e.HasIndex(x => x.StatusGeocodificacao);
         });
 
         // ── StudentGroup → GruposEstudantes ───────────────────────────────────
@@ -329,6 +359,63 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
              .HasForeignKey(x => x.ProfessorId)
              .OnDelete(DeleteBehavior.SetNull)
              .IsRequired(false);
+        });
+
+        // ── StudentAllocation → AlocacoesEstagiarios ──────────────────────────
+        mb.Entity<StudentAllocation>(e =>
+        {
+            e.ToTable("AlocacoesEstagiarios");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("IdAlocacao");
+            e.Property(x => x.LocationId).HasColumnName("IdUnidade");
+            e.Property(x => x.StudentId).HasColumnName("IdEstagiario");
+            e.Property(x => x.StartDate).HasColumnName("DataInicio");
+            e.Property(x => x.EndDate).HasColumnName("DataFim");
+            e.Property(x => x.Ativo).HasColumnName("Ativo").HasDefaultValue(true);
+            e.Property(x => x.Observacao).HasColumnName("Observacao");
+            e.Property(x => x.CreatedById).HasColumnName("CriadoPorId");
+            e.Property(x => x.CreatedAt).HasColumnName("CriadoEm");
+            e.Property(x => x.UpdatedAt).HasColumnName("AtualizadoEm");
+            e.HasIndex(x => x.LocationId);
+            e.HasIndex(x => x.StudentId);
+            // Garante no banco a regra de uma alocação ativa por estagiário.
+            e.HasIndex(x => x.StudentId)
+             .IsUnique()
+             .HasFilter("\"Ativo\" = TRUE")
+             .HasDatabaseName("UX_Alocacoes_EstagiarioAtivo");
+            e.HasOne(x => x.Location)
+             .WithMany(l => l.Allocations)
+             .HasForeignKey(x => x.LocationId)
+             .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Student)
+             .WithMany()
+             .HasForeignKey(x => x.StudentId)
+             .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.CreatedBy)
+             .WithMany()
+             .HasForeignKey(x => x.CreatedById)
+             .OnDelete(DeleteBehavior.SetNull)
+             .IsRequired(false);
+        });
+
+        // ── GeocodingCacheEntry → GeocodificacaoCache ─────────────────────────
+        mb.Entity<GeocodingCacheEntry>(e =>
+        {
+            e.ToTable("GeocodificacaoCache");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("Id");
+            e.Property(x => x.EnderecoNormalizado).HasColumnName("EnderecoNormalizado")
+             .HasMaxLength(500).IsRequired();
+            e.Property(x => x.Latitude).HasColumnName("Latitude");
+            e.Property(x => x.Longitude).HasColumnName("Longitude");
+            e.Property(x => x.EnderecoRetornado).HasColumnName("EnderecoRetornado");
+            e.Property(x => x.Precisao).HasColumnName("Precisao").HasMaxLength(100);
+            e.Property(x => x.Status).HasColumnName("Status").HasMaxLength(30);
+            e.Property(x => x.Provedor).HasColumnName("Provedor").HasMaxLength(30);
+            e.Property(x => x.CreatedAt).HasColumnName("CriadoEm");
+            e.Property(x => x.UpdatedAt).HasColumnName("AtualizadoEm");
+            e.Ignore(x => x.TemCoordenadas);
+            e.HasIndex(x => x.EnderecoNormalizado).IsUnique();
         });
     }
 }

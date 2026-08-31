@@ -79,6 +79,8 @@ Fluxo de autenticação:
 | BCrypt.Net-Next | 4.0.3 | Hash de senhas |
 | MailKit | 4.16.0 | Envio de e-mails (SMTP) |
 | Swashbuckle (Swagger) | 6.9.0 | Documentação da API |
+| ClosedXML | 0.104.2 | Leitura das planilhas de unidades (.xlsx) |
+| xUnit | 2.9.2 | Testes unitários (`backend.Tests`) |
 
 ### Frontend
 
@@ -176,6 +178,20 @@ vale apenas para o check-in; o check-out segue a janela normal do turno.
 Preceptores, professores e coordenadoras precisam aceitar, no primeiro acesso, o termo
 que registra que a senha é pessoal e intransferível e que respondem pelas ações feitas
 com a própria conta (`GET /api/auth/terms`, `POST /api/auth/accept-terms`).
+
+### Unidades de saúde e alocação de estagiários
+
+Cadastro das unidades (manual ou por planilha `.xlsx`/`.csv`), geocodificação dos
+endereços via **OpenStreetMap/Nominatim** e alocação de estagiários com histórico.
+
+As unidades ficam na tabela **`Locais`** — a mesma que o check-in usa para o
+geofence —, então a coordenada geocodificada já vale para validar a presença do
+aluno. O Nominatim é consultado **apenas pelo backend**, com User-Agent
+identificado, no máximo ~1 requisição por segundo e cache por endereço; a
+geocodificação em massa roda em segundo plano e nunca entra no fluxo do check-in.
+
+Documentação completa: [`docs/UNIDADES_SAUDE.md`](docs/UNIDADES_SAUDE.md) ·
+planilha de exemplo: [`docs/exemplos/`](docs/exemplos/unidades-saude-exemplo.csv)
 
 ### Formato do RGM
 
@@ -301,6 +317,13 @@ Base URL (produção): `https://estagiocheckapi-production.up.railway.app/api`
 | PATCH | `/irregularities/{id}/preceptor-review` | Sim (preceptor) | Ciência + observação |
 | PATCH | `/irregularities/{id}/professor-decision` | Sim (professor) | Aprovar ou negar |
 | GET | `/followups/my-schedules` | Sim (preceptor) | Rodízios do preceptor e alunos alocados |
+| GET/POST/PUT/DELETE | `/unidades-saude` | Sim | Unidades de saúde (escrita: professor) |
+| POST | `/unidades-saude/importar/preview` | Sim (professor) | Prévia da planilha, sem gravar |
+| POST | `/unidades-saude/importar/confirmar` | Sim (professor) | Confirma e enfileira geocodificação |
+| POST | `/unidades-saude/{id}/geocodificar` | Sim (professor) | Geocodifica pelo Nominatim |
+| GET/POST/DELETE | `/unidades-saude/{id}/estagiarios` | Sim | Alocação de estagiários |
+| GET | `/alocacoes` | Sim (gestão) | Todas as alocações, com histórico |
+| GET | `/estagiarios/{id}/unidade` | Sim | Unidade do estagiário (aluno: só a própria) |
 | GET | `/auth/terms` | Não | Texto do termo de responsabilidade |
 | POST | `/auth/accept-terms` | Sim | Registra o aceite do termo |
 
@@ -417,6 +440,8 @@ O banco de dados é **PostgreSQL** gerenciado pelo Entity Framework Core com mig
 | `PasswordResetCodes` | Códigos temporários de recuperação de senha |
 | `StudentSemesterHistory` | Histórico semestral do aluno |
 | `Irregularidades` | Ocorrências de ponto (fluxo aluno → preceptor → professor) |
+| `AlocacoesEstagiarios` | Alocação de estagiários às unidades, com histórico |
+| `GeocodificacaoCache` | Endereços já geocodificados, por endereço normalizado |
 
 ### Scripts SQL adicionais
 
@@ -427,7 +452,9 @@ database/
 ├── 004_consolidar_rgm_remover_matricula.sql
 ├── 005_irregularidades_e_perfis.sql      # Irregularidades, permissão de atraso,
 │                                         # perfil coordenadora, RGM sem o "14"
-└── 006_fuso_brasilia.sql                 # Registros de ponto em GMT-3 (executar UMA vez)
+├── 006_fuso_brasilia.sql                 # Registros de ponto em GMT-3 (executar UMA vez)
+└── 007_unidades_saude.sql                # Unidades de saúde, alocações e cache
+                                          # de geocodificação
 ```
 
 ---
