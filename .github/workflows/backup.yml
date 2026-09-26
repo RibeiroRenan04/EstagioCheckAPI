@@ -28,7 +28,7 @@ jobs:
           - banco: staging
             segredo: BACKUP_DATABASE_URL_STAGING
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: "Verificar configuração"
         id: config
