@@ -62,7 +62,7 @@ jobs:
         with:
           fetch-depth: 0
       # Impede que connection string, chave JWT ou senha voltem a ser commitadas.
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: false
