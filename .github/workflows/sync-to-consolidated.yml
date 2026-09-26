@@ -22,14 +22,14 @@ jobs:
     steps:
       # ── 1. Checkout do repositório FONTE (este repo — backend) ───────────
       - name: "📥 Checkout — Repositório Backend"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: source
           fetch-depth: 1
 
       # ── 2. Checkout do repositório CONSOLIDADO ────────────────────────────
       - name: "📥 Checkout — Repositório Consolidado"
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: RibeiroRenan04/TG1_UDF_enfermagem
           token: ${{ secrets.PAT_TOKEN }}
