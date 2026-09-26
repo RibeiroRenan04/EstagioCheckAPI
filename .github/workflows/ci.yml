@@ -1,0 +1,68 @@
+name: "✅ CI: build, testes e dependências"
+
+# ISO 25010 (manutenibilidade/confiabilidade) e ISO 27001 A.8.25–A.8.29 (desenvolvimento seguro):
+# nada chega à main sem compilar, sem passar nos testes e sem checar pacotes vulneráveis.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: "Build e testes"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: "Restaurar dependências"
+        run: dotnet restore EstagioCheckApi.sln
+
+      - name: "Compilar"
+        run: dotnet build EstagioCheckApi.sln --no-restore --configuration Release
+
+      - name: "Testes"
+        run: >
+          dotnet test backend.Tests --no-build --configuration Release
+          --logger "trx;LogFileName=resultado.trx" --results-directory TestResults
+
+      - name: "Publicar resultado dos testes"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resultado-testes
+          path: TestResults
+          retention-days: 14
+
+      # Falha o build se algum pacote NuGet tiver vulnerabilidade conhecida (inclusive transitiva).
+      - name: "Pacotes vulneráveis"
+        run: |
+          dotnet list EstagioCheckApi.sln package --vulnerable --include-transitive 2>&1 | tee vulneraveis.txt
+          if grep -qE "has the following vulnerable packages|possui os seguintes pacotes vulneráveis" vulneraveis.txt; then
+            echo "::error::Há pacotes com vulnerabilidade conhecida. Atualize-os antes do merge."
+            exit 1
+          fi
+
+  segredos:
+    name: "Varredura de segredos"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Impede que connection string, chave JWT ou senha voltem a ser commitadas.
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: false

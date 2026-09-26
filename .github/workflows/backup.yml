@@ -1,0 +1,64 @@
+name: "💾 Backup diário do banco"
+
+# ISO 22301 — ver docs/CONTINUIDADE_BACKUP.md. Cópia independente do provedor do banco:
+# se o projeto do Supabase for perdido, o backup continua existindo.
+#
+# Segredos necessários (Settings → Secrets and variables → Actions):
+#   BACKUP_DATABASE_URL          usuário backup_leitura (somente leitura) do banco principal
+#   BACKUP_DATABASE_URL_STAGING  usuário backup_leitura do banco de homologação
+#   BACKUP_PASSPHRASE            frase longa para a criptografia GPG (guardada também fora do GitHub)
+# Banco sem segredo configurado é apenas pulado, com aviso: não falha a esteira.
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 03:00 em Brasília
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - banco: principal
+            segredo: BACKUP_DATABASE_URL
+          - banco: staging
+            segredo: BACKUP_DATABASE_URL_STAGING
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Verificar configuração"
+        id: config
+        env:
+          URL: ${{ secrets[matrix.segredo] }}
+          PASS: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$PASS" ]; then
+            echo "::warning::${{ matrix.segredo }}/BACKUP_PASSPHRASE não configurados — backup de '${{ matrix.banco }}' ignorado."
+            echo "ativo=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ativo=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # pg_dump precisa ser da mesma versão do servidor ou mais nova: usa a imagem oficial.
+      - name: "Gerar backup criptografado"
+        if: steps.config.outputs.ativo == 'true'
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets[matrix.segredo] }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          docker run --rm -e BACKUP_PASSPHRASE -e BACKUP_DATABASE_URL \
+            -v "$PWD/database:/scripts:ro" -v "$PWD/saida:/saida" postgres:17 \
+            bash -c 'apt-get update -qq && apt-get install -y -qq gnupg >/dev/null && bash /scripts/backup.sh "$BACKUP_DATABASE_URL" /saida'
+
+      - name: "Guardar artefato"
+        if: steps.config.outputs.ativo == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-${{ matrix.banco }}-${{ github.run_id }}
+          path: saida/
+          retention-days: 30
+          if-no-files-found: error

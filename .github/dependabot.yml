@@ -1,0 +1,17 @@
+# Atualizações de segurança automáticas (ISO 27001 A.8.8 — gestão de vulnerabilidades técnicas).
+version: 2
+updates:
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      microsoft:
+        patterns: ["Microsoft.*", "Npgsql*", "System.*"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
